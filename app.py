@@ -145,10 +145,12 @@ def chart_filter_panel(
 def main():
     st.title("America’s 100 Oldest Utility-Scale and Distributed PV Systems")
     st.caption("Interactive analysis of the oldest 100 U.S. PV systems, as drawn primarily from the Energy Information Administration (EIA) https://www.eia.gov/beta/electricity/data/browser/. Use the chart-level filters to explore performance by geography and system structure.")
+       )
 if __name__ == "__main__":
     main()
 st.markdown('<p class="attrib">This webpage was created and co-authored by <b>Tim Townsend</b>, <b>Kajal Sheth</b>, <b>Kenneth Sauer</b> 😊</p>',
             unsafe_allow_html=True)
+
     tables = get_data()
     plant = tables["plant"]
     consolidated = tables["consolidated"]
@@ -328,6 +330,6 @@ st.markdown('<p class="attrib">This webpage was created and co-authored by <b>Ti
             rounded_for_display(plant[display_cols].head(table_rows)),
             use_container_width=True,
             hide_index=True,
-        )
+     
 
 
