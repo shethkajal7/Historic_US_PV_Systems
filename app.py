@@ -57,6 +57,9 @@ def _short_value(metric, value):
         return "" if pd.isna(value) else value
     metric_text = str(metric).lower()
     if "degr" in metric_text or metric_text.startswith("%") or "clip" in metric_text or "tracking" in metric_text or "hot" in metric_text or "cold" in metric_text:
+        # Degradation values are stored as negative slopes; display as positive (absolute) percentages.
+        if "degr" in metric_text:
+            return f"{abs(num):.1%}"
         return f"{num:.1%}"
     if "pi" in metric_text or "std deviation" in metric_text or "ilr" in metric_text or "df" in metric_text:
         return f"{num:.2f}"

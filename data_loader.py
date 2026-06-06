@@ -191,11 +191,35 @@ def summary_metrics(plant: pd.DataFrame) -> Dict[str, float]:
     }
 
 
-def get_comparison_table(comparison_raw: pd.DataFrame) -> pd.DataFrame:
+def get_comparison_table(comparison_raw: pd.DataFrame, path: Path = DATA_PATH) -> pd.DataFrame:
     left = comparison_raw.iloc[8:34, [3, 5, 6, 7]].copy()
     left.columns = ["Metric", "Set A", "Set B", "Finding"]
-    left = left[left["Metric"].notna()]
-    return left.reset_index(drop=True)
+    left = left[left["Metric"].notna()].reset_index(drop=True)
+
+    # The Comparison sheet pulls its degradation values from PlantData BR1/BW1, which use
+    # an SLD-based formula that does not match the piecewise linest slopes shown in the charts.
+    # Override the three degradation rows with the correct medians computed directly from the
+    # per-system linest slope columns in PlantData (col 143 = 7-yr degr, col 146 = post-7-yr degr)
+    # and from Newer25 (col 82 = Lifetime Degr, which equals the 7-yr slope for Set B).
+    try:
+        plant_raw = pd.read_excel(path, sheet_name="PlantData", header=None, engine="openpyxl")
+        newer25_raw = pd.read_excel(path, sheet_name="Newer25", header=None, engine="openpyxl")
+
+        seta_7yr = pd.to_numeric(plant_raw.iloc[6:106, 143], errors="coerce").median()
+        seta_post7 = pd.to_numeric(plant_raw.iloc[6:106, 146], errors="coerce").median()
+        setb_7yr = pd.to_numeric(newer25_raw.iloc[6:31, 82], errors="coerce").median()
+
+        for idx, row in left.iterrows():
+            metric = str(row["Metric"]).strip()
+            if metric == "Degr, first 7 yrs":
+                left.at[idx, "Set A"] = seta_7yr
+                left.at[idx, "Set B"] = setb_7yr
+            elif metric == "Degr, beyond 7 yrs":
+                left.at[idx, "Set A"] = seta_post7
+    except Exception:
+        pass
+
+    return left
 
 
 def get_state_counts(states_raw: pd.DataFrame) -> pd.DataFrame:
