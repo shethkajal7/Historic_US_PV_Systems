@@ -233,12 +233,7 @@ def annual_pi_cone(pi_long: pd.DataFrame, title: str = "Annual PI for the Longes
     return polish(fig, height=760, legend="right")
 
 def age_table_chart(age_table: pd.DataFrame, latest_year: int | None = None):
-    """Age distribution taken directly from the workbook's own age table.
-
-    The revised workbook states the operating-age counts, split into fixed-tilt and
-    tracking, at PlantData FY6:GB18. Reading them avoids recomputing an age the source
-    now reports, and it lets the bars be split by structure.
-    """
+    """Age distribution from the workbook's own age counts, split by structure."""
     df = age_table.copy()
     df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
     long = df.melt(
@@ -311,9 +306,7 @@ def piecewise_pi_trend_chart(df: pd.DataFrame):
     fitted lines separately for years 1-7 and 7-16. It intentionally avoids
     any single full-period fitted line.
     """
-    # These series names are assigned by the loader, so they are stable even though the
-    # revised workbook relabelled the underlying rows from 'Median' to 'p50' and from
-    # 'p90 (statistical)' to 'p90'.
+    # Series names are assigned by the loader, so they are stable across workbook relabels.
     observed_names = ["Median PI", "P90 statistical PI"]
     observed_color_map = {
         "Median PI": "#2563EB",
@@ -423,8 +416,6 @@ def workbook_line_chart(
         "p10 (obs.rank)": "#22C55E",
         "P10 (obs.rank)": "#22C55E",
         "P10": "#22C55E",
-        # The revised workbook renamed the median series from 'Median' to 'p50' and the
-        # statistical downside series from 'p90 (statistical)' to 'p90'.
         "p10 (Gaussian)": "#15803D",
         "Median": "#2563EB",
         "Median PI": "#2563EB",
@@ -509,9 +500,7 @@ def null_overlap_chart(
 ):
     fig = go.Figure()
 
-    # The revised workbook supplies a 'Min density' envelope, which is the lower of the
-    # two density curves at each PI value. Shading beneath it shows the area the two
-    # distributions actually have in common, which is what the overlap figure measures.
+    # Shade beneath the lower of the two density curves to show the common area.
     if overlap_band is not None and not overlap_band.empty:
         band = _clean_xy(overlap_band).sort_values("x")
         fig.add_trace(go.Scatter(
@@ -610,11 +599,8 @@ def variability_single_system_chart(detail: pd.DataFrame, site_name: str):
 
     if np.isfinite(poa_var):
         band = plot_df.dropna(subset=["Best-fit PI"]).copy()
-        # The revised workbook supplies explicit high and low variability rows, but only
-        # populates them for the system used in its own chart. Where they are present the
-        # workbook values are used directly; otherwise the band is reconstructed the same
-        # way the workbook builds it, as the best-fit trend scaled by (1 +/- POA variability)
-        # rather than shifted by a fixed offset.
+        # Use the workbook's band rows where present; otherwise rebuild them the way the
+        # workbook does, scaling the best-fit trend by (1 +/- POA variability).
         band["Upper weather range"] = band["Upper weather range"].fillna(
             band["Best-fit PI"] * (1.0 + poa_var)
         )
@@ -680,12 +666,7 @@ def pi_cdf_chart(
     title: str = "Annual PI Cumulative Distributions by Operating Year",
     emphasis_years: tuple[int, ...] = (1, 4, 7, 10, 13, 16),
 ):
-    """Family of cumulative distribution curves, one per operating year.
-
-    For each year the systems are ordered from worst to best PI and plotted against the
-    increasing percentage of the fleet. Because the curves are rebuilt from the master
-    plant table, each point still identifies the system it represents.
-    """
+    """Family of cumulative distribution curves, one per operating year."""
     if cdf is None or cdf.empty:
         return polish(go.Figure(), height=760, legend="right")
 
@@ -754,11 +735,7 @@ def pr_vs_temperature_chart(
     pr_analysis: pd.DataFrame,
     title: str = "Demonstrated PR vs. Estimated Module Temperature, by Structure",
 ):
-    """Lifetime performance ratio against estimated module temperature.
-
-    The demonstrated PR needs no temperature adjustment of its own, but relating it to
-    operating temperature is what motivates the adjustment applied to the PI.
-    """
+    """Lifetime performance ratio against estimated module temperature."""
     df = pr_analysis.dropna(subset=["Estim. Tmod", "PR"]).copy()
     fig = px.scatter(
         df,

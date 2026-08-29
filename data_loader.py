@@ -99,13 +99,8 @@ def load_workbook_tables(path: Path = DATA_PATH) -> Dict[str, pd.DataFrame]:
         "PRanalysis": pd.read_excel(path, sheet_name="PRanalysis", header=None, engine="openpyxl"),
     }
 
-    # The ConsolidatedResults sheet was not refreshed when the module-temperature
-    # adjustment was applied, so its PI column and ranking are pre-adjustment. The
-    # descriptive columns (name, year, module type, structure, state, MWp, TMY2 source,
-    # data years) and the degradation slopes are unaffected by that adjustment and are
-    # kept exactly as the workbook author curated them. Only the PI values and the
-    # resulting rank order are rebuilt from PlantData so that this table agrees with
-    # every other view in the app.
+    # ConsolidatedResults was not refreshed for the module-temperature adjustment, so only
+    # its PI values and rank order are rebuilt from PlantData. All other columns are kept.
     consolidated = rebuild_consolidated(consolidated, plant)
 
     return {
@@ -127,10 +122,8 @@ def load_workbook_tables(path: Path = DATA_PATH) -> Dict[str, pd.DataFrame]:
 def rebuild_consolidated(consolidated: pd.DataFrame, plant: pd.DataFrame) -> pd.DataFrame:
     """Refresh the ranked results table with temperature-adjusted PI values.
 
-    The workbook's ConsolidatedResults sheet still holds the pre-adjustment PI, which
-    would put the ranking chart and the ranked table out of step with the rest of the
-    app. This joins the adjusted 'Lifetime PI' from PlantData by system name and
-    re-sorts, leaving all other columns untouched.
+    ConsolidatedResults still holds pre-adjustment PI. This joins the adjusted
+    'Lifetime PI' from PlantData by name and re-sorts, leaving other columns untouched.
     """
     out = consolidated.copy()
     if "Name" not in out.columns or "PI (@0.5% degr)" not in out.columns:
@@ -236,29 +229,10 @@ def get_comparison_table(comparison_raw: pd.DataFrame, path: Path = DATA_PATH) -
     left.columns = ["Metric", "Set A", "Set B", "Finding"]
     left = left[left["Metric"].notna()].reset_index(drop=True)
 
-    # The Comparison sheet pulls its degradation values from PlantData BR1/BW1, which use
-    # an SLD-based formula that does not match the piecewise linest slopes shown in the charts.
-    # Override the three degradation rows with the correct medians computed directly from the
-    # per-system linest slope columns in PlantData (col 143 = 7-yr degr, col 146 = post-7-yr degr)
-    # and from Newer25 (col 82 = Lifetime Degr, which equals the 7-yr slope for Set B).
-    try:
-        plant_raw = pd.read_excel(path, sheet_name="PlantData", header=None, engine="openpyxl")
-        newer25_raw = pd.read_excel(path, sheet_name="Newer25", header=None, engine="openpyxl")
-
-        seta_7yr = pd.to_numeric(plant_raw.iloc[6:106, 143], errors="coerce").median()
-        seta_post7 = pd.to_numeric(plant_raw.iloc[6:106, 146], errors="coerce").median()
-        setb_7yr = pd.to_numeric(newer25_raw.iloc[6:31, 82], errors="coerce").median()
-
-        for idx, row in left.iterrows():
-            metric = str(row["Metric"]).strip()
-            if metric == "Degr, first 7 yrs":
-                left.at[idx, "Set A"] = seta_7yr
-                left.at[idx, "Set B"] = setb_7yr
-            elif metric == "Degr, beyond 7 yrs":
-                left.at[idx, "Set A"] = seta_post7
-    except Exception:
-        pass
-
+    # Values are read straight from the Comparison sheet so the page matches the workbook.
+    # A previous override of the degradation rows (median of per-system slopes) was removed:
+    # it reported a different statistic from the sheet's slope-of-the-median and sat further
+    # from the piecewise chart on the same page.
     return left
 
 
@@ -308,9 +282,8 @@ def get_detail_p50(detail_raw: pd.DataFrame) -> pd.DataFrame:
         # so the app follows the spreadsheet chart ranges instead of recomputing visually similar lines.
         for year in range(1, 18):
             rec[f"fit_year_{year}"] = pd.to_numeric(r.iloc[40 + year - 1], errors="coerce") if 40 + year - 1 < len(r) else np.nan
-        # Explicit high/low weather-variability bands added to the revised workbook at
-        # BG:BW and BY:CO. The workbook only populates these for the system used in its
-        # own chart, so the app falls back to computing the band where they are blank.
+        # High/low weather-variability bands at BG:BW and BY:CO. Only populated for one
+        # system, so the app computes the band where they are blank.
         for year in range(1, 18):
             rec[f"high_year_{year}"] = pd.to_numeric(r.iloc[58 + year - 1], errors="coerce") if 58 + year - 1 < len(r) else np.nan
             rec[f"low_year_{year}"] = pd.to_numeric(r.iloc[76 + year - 1], errors="coerce") if 76 + year - 1 < len(r) else np.nan
@@ -320,12 +293,8 @@ def get_detail_p50(detail_raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_pr_analysis(pr_raw: pd.DataFrame) -> pd.DataFrame:
-    """Parse the PRanalysis sheet added in the revised workbook.
-
-    The sheet relates each system's demonstrated performance ratio to its estimated
-    module temperature, and records the temperature correction factor alongside the
-    original and corrected performance index.
-    """
+    """Performance ratio versus estimated module temperature, with the correction factor
+    and the original and corrected performance index for each system."""
     if pr_raw is None or pr_raw.empty:
         return pd.DataFrame()
     rows = pr_raw.iloc[6:106, :18].copy()
@@ -371,11 +340,7 @@ def get_pr_analysis_summary(pr_raw: pd.DataFrame) -> Dict[str, float]:
 
 
 def get_age_table(plant_raw: pd.DataFrame) -> pd.DataFrame:
-    """Operating-age counts split by structure, from PlantData FY6:GB18.
-
-    The revised workbook states these counts directly, so the app reads them instead of
-    recomputing ages from the first full year of operation.
-    """
+    """Operating-age counts split by structure, stated directly at PlantData FY6:GB18."""
     if plant_raw is None or plant_raw.shape[1] <= 183:
         return pd.DataFrame()
     block = plant_raw.iloc[6:18, 180:184].copy()
@@ -403,10 +368,8 @@ def get_tmy_locations(states25_raw: pd.DataFrame) -> pd.DataFrame:
 def build_pi_cdf(plant: pd.DataFrame, max_year: int = 16) -> pd.DataFrame:
     """Cumulative distribution of annual PI for each operating year.
 
-    For each operating year the systems are sorted from worst to best PI and plotted
-    against the increasing percentage of the fleet. Because this is rebuilt from the
-    master plant table rather than from an anonymized export, every point keeps its
-    system name, state, size, and structure for hover identification.
+    Systems are sorted worst to best PI against the increasing percentage of the fleet.
+    Built from the plant table, so every point keeps its identifying fields for hover.
     """
     id_cols = [c for c in ["Name", "State", "Type", "MWp", "1st full yr"] if c in plant.columns]
     frames = []
@@ -453,8 +416,7 @@ def pi_cdf_median_trend(cdf: pd.DataFrame) -> Dict[str, float]:
 def get_overlap_stats(null_raw: pd.DataFrame) -> Dict[str, float]:
     """Overlap area, crossover PI, and the two set statistics from NullOverlap.
 
-    The revised workbook shifted this block three columns to the left and lengthened the
-    PI grid, so the values are located by scanning rather than by fixed cell reference.
+    Summary values are located by scanning for their labels rather than by fixed cell.
     """
     out: Dict[str, float] = {}
     if null_raw is None or null_raw.empty:
@@ -523,10 +485,8 @@ def build_workbook_plot_tables(raw_sheets: Dict[str, pd.DataFrame]) -> Dict[str,
         _series_from_cells(plant_raw, None, "BH6:BQ6", "BH2:BQ2").assign(series="P90 trend, years 7 to 16"),
     ], ignore_index=True)
 
-    # The revised NullOverlap sheet moved this block three columns to the left and
-    # extended the PI grid from 14 to 20 points. Column K is a new 'Min density'
-    # envelope, which is the smaller of the two density curves at each PI value and
-    # therefore traces the area the two distributions have in common.
+    # Column K is a 'Min density' envelope: the smaller of the two density curves at each
+    # PI value, tracing the area the two distributions have in common.
     null_df = pd.concat([
         _series_from_cells(null_overlap, "I1", "F4:F23", "I4:I23"),
         _series_from_cells(null_overlap, "J1", "F4:F23", "J4:J23"),

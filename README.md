@@ -58,6 +58,12 @@ The app reads several chart source ranges by cell reference. If the workbook is 
 | `PRanalysis` | `A6:R106` | Performance ratio versus module temperature |
 | `States25` | `J31:J85` | Unique TMY locations |
 
+## Comparison table
+
+Every value in the Fleet Summary Comparison table is read straight from the workbook's `Comparison` sheet, so the page matches the spreadsheet cell for cell.
+
+An earlier version overrode the three degradation rows with the median of the 100 per-system linest slopes. That override has been removed. The sheet reports the slope of the fleet median PI curve (-0.84%/yr over the first seven years), which is within 0.04 points of the piecewise chart on the same page (-0.80%/yr); the override reported the median of the individual slopes (-1.12%/yr), which is 0.32 points away from that chart. The two are different statistics, and because the distribution of per-system slopes is strongly left-skewed, the median of the slopes sits well below the slope of the median.
+
 ## Known deprecation
 
 Streamlit reports that `use_container_width` will be replaced by `width`. The calls still work on the pinned version but will need updating on a future Streamlit release.
