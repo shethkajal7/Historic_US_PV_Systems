@@ -232,6 +232,41 @@ def annual_pi_cone(pi_long: pd.DataFrame, title: str = "Annual PI for the Longes
     fig.update_layout(legend_title_text="Fleet percentile")
     return polish(fig, height=760, legend="right")
 
+def age_table_chart(age_table: pd.DataFrame, latest_year: int | None = None):
+    """Age distribution taken directly from the workbook's own age table.
+
+    The revised workbook states the operating-age counts, split into fixed-tilt and
+    tracking, at PlantData FY6:GB18. Reading them avoids recomputing an age the source
+    now reports, and it lets the bars be split by structure.
+    """
+    df = age_table.copy()
+    df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
+    long = df.melt(
+        id_vars=["Age", "Number"],
+        value_vars=[c for c in ["Fixed-tilt", "Tracking"] if c in df.columns],
+        var_name="Type",
+        value_name="Count",
+    )
+    long = long[long["Count"].fillna(0) > 0]
+    suffix = f" Through {latest_year}" if latest_year else ""
+    fig = px.bar(
+        long,
+        x="Age",
+        y="Count",
+        color="Type",
+        title=f"U.S. Top 100 Oldest PV Systems: Age Distribution{suffix}",
+        labels={"Age": "Operating age, years", "Count": "Count"},
+        color_discrete_map={"Fixed-tilt": "#2563EB", "Tracking": "#F97316"},
+        hover_data={"Number": True},
+        text="Count",
+    )
+    fig.update_traces(textposition="inside")
+    fig.update_layout(barmode="stack", bargap=0.18)
+    fig.update_xaxes(dtick=1, title_text="Operating age, years")
+    fig.update_yaxes(title_text="Count")
+    return polish(fig, height=620, legend="right")
+
+
 def age_distribution_chart(plant: pd.DataFrame, actual_long: pd.DataFrame | None = None):
     df = plant.dropna(subset=["1st full yr"]).copy()
     if actual_long is not None and not actual_long.empty and "calendar_year" in actual_long.columns:
@@ -276,6 +311,9 @@ def piecewise_pi_trend_chart(df: pd.DataFrame):
     fitted lines separately for years 1-7 and 7-16. It intentionally avoids
     any single full-period fitted line.
     """
+    # These series names are assigned by the loader, so they are stable even though the
+    # revised workbook relabelled the underlying rows from 'Median' to 'p50' and from
+    # 'p90 (statistical)' to 'p90'.
     observed_names = ["Median PI", "P90 statistical PI"]
     observed_color_map = {
         "Median PI": "#2563EB",
@@ -385,12 +423,17 @@ def workbook_line_chart(
         "p10 (obs.rank)": "#22C55E",
         "P10 (obs.rank)": "#22C55E",
         "P10": "#22C55E",
+        # The revised workbook renamed the median series from 'Median' to 'p50' and the
+        # statistical downside series from 'p90 (statistical)' to 'p90'.
+        "p10 (Gaussian)": "#15803D",
         "Median": "#2563EB",
         "Median PI": "#2563EB",
+        "p50": "#2563EB",
         "P50 / Median": "#2563EB",
         "p90 (obs.rank)": "#EF4444",
         "P90 (obs.rank)": "#EF4444",
         "P90 statistical PI": "#EF4444",
+        "p90": "#EF4444",
         "P90": "#EF4444",
         "Median trend, years 1 to 7": "#2563EB",
         "Median trend, years 7 to 16": "#2563EB",
@@ -436,15 +479,6 @@ def workbook_ratio_chart(df: pd.DataFrame, title: str, show_trendlines: bool = T
     return polish(fig, height=700, legend="right")
 
 
-def workbook_bar_chart(df: pd.DataFrame, title: str, x_col: str, y_col: str, x_title: str, y_title: str):
-    fig = px.bar(
-        df, x=x_col, y=y_col, title=title, text_auto=True, color=y_col,
-        color_continuous_scale="Plasma",
-    )
-    fig.update_layout(xaxis_title=x_title, yaxis_title=y_title, coloraxis_showscale=False)
-    return polish(fig, height=600, legend="bottom")
-
-
 def temperature_comparison_chart(df: pd.DataFrame, title: str):
     plot_df = df.copy()
     fig = px.bar(
@@ -468,14 +502,47 @@ def temperature_comparison_chart(df: pd.DataFrame, title: str):
     return polish(fig, height=620, legend="right")
 
 
-def null_overlap_chart(df: pd.DataFrame, title: str = "Null Overlap Between Older-100 First 7 Years and Newer-25 Sample"):
-    fig = px.line(
-        df, x="x", y="y", color="series", markers=True, title=title,
-        color_discrete_sequence=VIBRANT_COLORS,
-        labels={"x": "Performance Index", "y": "Probability density"},
+def null_overlap_chart(
+    df: pd.DataFrame,
+    title: str = "Null Overlap Between Older-100 First 7 Years and Newer-25 Sample",
+    overlap_band: pd.DataFrame | None = None,
+):
+    fig = go.Figure()
+
+    # The revised workbook supplies a 'Min density' envelope, which is the lower of the
+    # two density curves at each PI value. Shading beneath it shows the area the two
+    # distributions actually have in common, which is what the overlap figure measures.
+    if overlap_band is not None and not overlap_band.empty:
+        band = _clean_xy(overlap_band).sort_values("x")
+        fig.add_trace(go.Scatter(
+            x=band["x"],
+            y=band["y"],
+            mode="lines",
+            name="Overlapping area",
+            line={"width": 0},
+            fill="tozeroy",
+            fillcolor="rgba(100,116,139,0.22)",
+            hovertemplate="PI %{x:.2f}<br>Common density %{y:.3f}<extra></extra>",
+        ))
+
+    palette = {"Set A: 100": "#2563EB", "Set B: 25": "#F97316"}
+    for idx, (series_name, part) in enumerate(_clean_xy(df).groupby("series", sort=False)):
+        part = part.sort_values("x")
+        fig.add_trace(go.Scatter(
+            x=part["x"],
+            y=part["y"],
+            mode="lines+markers",
+            name=str(series_name),
+            line={"width": 3, "color": palette.get(str(series_name), VIBRANT_COLORS[idx % len(VIBRANT_COLORS)])},
+            marker={"size": 7},
+            hovertemplate=f"{series_name}<br>PI %{{x:.2f}}<br>Density %{{y:.3f}}<extra></extra>",
+        ))
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Performance Index",
+        yaxis_title="Probability density",
     )
-    fig.update_traces(line=dict(width=3), marker=dict(size=7))
-    fig.update_layout(xaxis_title="Performance Index", yaxis_title="Probability density")
     return polish(fig, height=680, legend="right")
 
 
@@ -508,7 +575,7 @@ def variability_middle_systems_chart(detail: pd.DataFrame):
         xaxis_title="Year of operation",
         yaxis_title="Performance Index",
         yaxis=dict(range=[0, 1.2]),
-        title={"text": "Five Median-Ranked U.S. Systems (#48-#52 of 100): PI Histories<br><sup>All five systems have lifetime PI near 88%. Albuquerque and Fresno show large failures; the others follow steadier paths.</sup>"},
+        title={"text": "Five Median-Ranked U.S. Systems (#48-#52 of 100): PI Histories<br><sup>All five systems have lifetime PI near 87%. Wild Horse and Dow Jones show large failures; the others follow steadier paths.</sup>"},
     )
     return polish(fig, height=640, legend="right")
 
@@ -517,15 +584,17 @@ def variability_single_system_chart(detail: pd.DataFrame, site_name: str):
     row = detail[detail["Name"] == site_name].iloc[0]
     rows = []
     for year in range(1, 18):
-        pi_col = f"year_{year}"
-        fit_col = f"fit_year_{year}"
-        pi_val = row.get(pi_col)
-        fit_val = row.get(fit_col)
+        pi_val = row.get(f"year_{year}")
+        fit_val = row.get(f"fit_year_{year}")
+        high_val = row.get(f"high_year_{year}")
+        low_val = row.get(f"low_year_{year}")
         if pd.notna(pi_val) or pd.notna(fit_val):
             rows.append({
                 "Relative year": year,
                 "PI": float(pi_val) if pd.notna(pi_val) else np.nan,
                 "Best-fit PI": float(fit_val) if pd.notna(fit_val) else np.nan,
+                "Upper weather range": float(high_val) if pd.notna(high_val) else np.nan,
+                "Lower weather range": float(low_val) if pd.notna(low_val) else np.nan,
             })
     plot_df = pd.DataFrame(rows).dropna(how="all", subset=["PI", "Best-fit PI"])
     poa_var = float(row.get("Normal POA Variability", np.nan))
@@ -541,8 +610,17 @@ def variability_single_system_chart(detail: pd.DataFrame, site_name: str):
 
     if np.isfinite(poa_var):
         band = plot_df.dropna(subset=["Best-fit PI"]).copy()
-        band["Upper weather range"] = band["Best-fit PI"] + poa_var
-        band["Lower weather range"] = band["Best-fit PI"] - poa_var
+        # The revised workbook supplies explicit high and low variability rows, but only
+        # populates them for the system used in its own chart. Where they are present the
+        # workbook values are used directly; otherwise the band is reconstructed the same
+        # way the workbook builds it, as the best-fit trend scaled by (1 +/- POA variability)
+        # rather than shifted by a fixed offset.
+        band["Upper weather range"] = band["Upper weather range"].fillna(
+            band["Best-fit PI"] * (1.0 + poa_var)
+        )
+        band["Lower weather range"] = band["Lower weather range"].fillna(
+            band["Best-fit PI"] * (1.0 - poa_var)
+        )
         fig.add_trace(go.Scatter(
             x=band["Relative year"],
             y=band["Upper weather range"],
@@ -596,6 +674,158 @@ def variability_single_system_chart(detail: pd.DataFrame, site_name: str):
         yaxis=dict(range=[0, 1.2]),
     )
     return polish(fig, height=760, legend="bottom")
+
+def pi_cdf_chart(
+    cdf: pd.DataFrame,
+    title: str = "Annual PI Cumulative Distributions by Operating Year",
+    emphasis_years: tuple[int, ...] = (1, 4, 7, 10, 13, 16),
+):
+    """Family of cumulative distribution curves, one per operating year.
+
+    For each year the systems are ordered from worst to best PI and plotted against the
+    increasing percentage of the fleet. Because the curves are rebuilt from the master
+    plant table, each point still identifies the system it represents.
+    """
+    if cdf is None or cdf.empty:
+        return polish(go.Figure(), height=760, legend="right")
+
+    years = sorted(int(y) for y in cdf["Operating year"].dropna().unique())
+    fig = go.Figure()
+
+    # Grade the colour from the first year to the last so the leftward march of the
+    # curves reads as a progression rather than as unrelated series.
+    for idx, year in enumerate(years):
+        part = cdf[cdf["Operating year"] == year].sort_values("pi")
+        if part.empty:
+            continue
+        shade = idx / max(1, len(years) - 1)
+        red = int(37 + shade * (220 - 37))
+        green = int(99 + shade * (38 - 99))
+        blue = int(235 + shade * (38 - 235))
+        emphasised = year in emphasis_years
+        count = int(part["Systems in year"].iloc[0])
+        customdata = np.column_stack([
+            part["Name"].astype(str).to_numpy(),
+            part["State"].astype(str).to_numpy() if "State" in part.columns else np.full(len(part), ""),
+            part["Type"].astype(str).to_numpy() if "Type" in part.columns else np.full(len(part), ""),
+            pd.to_numeric(part.get("MWp"), errors="coerce").to_numpy() if "MWp" in part.columns else np.full(len(part), np.nan),
+            part["Systems in year"].to_numpy(),
+        ])
+        fig.add_trace(go.Scatter(
+            x=part["pi"],
+            y=part["Cumulative fraction"],
+            mode="lines",
+            name=f"Year {year}",
+            legendgroup=f"Year {year}",
+            showlegend=emphasised,
+            line={
+                "width": 4 if emphasised else 1.4,
+                "color": f"rgba({red},{green},{blue},{0.98 if emphasised else 0.42})",
+                "shape": "hv",
+            },
+            customdata=customdata,
+            hovertemplate=(
+                f"<b>Year {year}</b> (n=%{{customdata[4]}})<br>"
+                "%{customdata[0]}, %{customdata[1]}<br>"
+                "Structure %{customdata[2]}, %{customdata[3]:.1f} MWp<br>"
+                "PI %{x:.3f}<br>Fleet fraction %{y:.0%}<extra></extra>"
+            ),
+        ))
+
+    # The p50 line is where the median PI for each year can be read off directly.
+    fig.add_hline(
+        y=0.5, line_dash="dot", line_color="#334155", line_width=2,
+        annotation_text="p50", annotation_position="top left",
+    )
+    # An ideal fleet would sit at PI = 1.0 with no spread, giving a vertical step here.
+    fig.add_vline(x=1.0, line_dash="dot", line_color="#94A3B8", line_width=2)
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Performance Index",
+        yaxis_title="Cumulative fraction of the fleet",
+        legend_title_text="Operating year",
+    )
+    fig.update_yaxes(tickformat=".0%", range=[0, 1.02])
+    return polish(fig, height=780, legend="right")
+
+
+def pr_vs_temperature_chart(
+    pr_analysis: pd.DataFrame,
+    title: str = "Demonstrated PR vs. Estimated Module Temperature, by Structure",
+):
+    """Lifetime performance ratio against estimated module temperature.
+
+    The demonstrated PR needs no temperature adjustment of its own, but relating it to
+    operating temperature is what motivates the adjustment applied to the PI.
+    """
+    df = pr_analysis.dropna(subset=["Estim. Tmod", "PR"]).copy()
+    fig = px.scatter(
+        df,
+        x="Estim. Tmod",
+        y="PR",
+        color="Type",
+        hover_name="Name",
+        hover_data=["State", "Module type", "Slope/Tilt"],
+        title=title,
+        color_discrete_map={"Fixed": "#2563EB", "Tracker": "#F97316"},
+        trendline_scope=None,
+    )
+    fig.update_traces(marker=dict(size=10, opacity=0.82, line=dict(width=1, color="white")))
+    add_group_trendlines(
+        fig, df.assign(series=df["Type"]), "Estim. Tmod", "PR", "series", "PR",
+        max_equations=2,
+        color_map={"Fixed": "#2563EB", "Tracker": "#F97316"},
+    )
+    fig.update_layout(
+        xaxis_title="Estimated module temperature, °C",
+        yaxis_title="Demonstrated performance ratio",
+        legend_title_text="Structure",
+    )
+    return polish(fig, height=700, legend="right")
+
+
+def pi_temperature_adjustment_chart(
+    pr_analysis: pd.DataFrame,
+    title: str = "Lifetime PI Before and After the Module Temperature Adjustment",
+):
+    """Original and temperature-corrected PI for each system, ordered by temperature."""
+    df = pr_analysis.dropna(subset=["Estim. Tmod", "PI original", "PI with Tmod correction"]).copy()
+    df = df.sort_values("Estim. Tmod")
+
+    fig = go.Figure()
+    for _, row in df.iterrows():
+        fig.add_trace(go.Scatter(
+            x=[row["Estim. Tmod"], row["Estim. Tmod"]],
+            y=[row["PI original"], row["PI with Tmod correction"]],
+            mode="lines",
+            line={"width": 1, "color": "rgba(100,116,139,0.45)"},
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+    fig.add_trace(go.Scatter(
+        x=df["Estim. Tmod"], y=df["PI original"], mode="markers",
+        name="PI before adjustment",
+        marker=dict(size=9, color="#94A3B8", line=dict(width=1, color="white")),
+        text=df["Name"],
+        hovertemplate="%{text}<br>Tmod %{x:.1f} °C<br>PI before %{y:.3f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=df["Estim. Tmod"], y=df["PI with Tmod correction"], mode="markers",
+        name="PI after adjustment",
+        marker=dict(size=9, color="#2563EB", line=dict(width=1, color="white")),
+        text=df["Name"],
+        hovertemplate="%{text}<br>Tmod %{x:.1f} °C<br>PI after %{y:.3f}<extra></extra>",
+    ))
+    fig.add_hline(y=1.0, line_dash="dot", line_color="#64748B")
+    fig.update_layout(
+        title=title,
+        xaxis_title="Estimated module temperature, °C",
+        yaxis_title="Performance Index",
+        legend_title_text="Series",
+    )
+    return polish(fig, height=700, legend="right")
+
 
 def site_actual_chart(actual_long: pd.DataFrame, site_name: str):
     df = actual_long[actual_long["Name"] == site_name].sort_values("relative_year")

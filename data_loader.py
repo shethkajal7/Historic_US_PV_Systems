@@ -94,10 +94,19 @@ def load_workbook_tables(path: Path = DATA_PATH) -> Dict[str, pd.DataFrame]:
     raw_sheets = {
         "PlantData": pd.read_excel(path, sheet_name="PlantData", header=None, engine="openpyxl"),
         "States25": pd.read_excel(path, sheet_name="States25", header=None, engine="openpyxl"),
-        "Exclusions": pd.read_excel(path, sheet_name="Exclusions", header=None, engine="openpyxl"),
         "NullOverlap": pd.read_excel(path, sheet_name="NullOverlap", header=None, engine="openpyxl"),
         "DetailOfP50": pd.read_excel(path, sheet_name="DetailOfP50", header=None, engine="openpyxl"),
+        "PRanalysis": pd.read_excel(path, sheet_name="PRanalysis", header=None, engine="openpyxl"),
     }
+
+    # The ConsolidatedResults sheet was not refreshed when the module-temperature
+    # adjustment was applied, so its PI column and ranking are pre-adjustment. The
+    # descriptive columns (name, year, module type, structure, state, MWp, TMY2 source,
+    # data years) and the degradation slopes are unaffected by that adjustment and are
+    # kept exactly as the workbook author curated them. Only the PI values and the
+    # resulting rank order are rebuilt from PlantData so that this table agrees with
+    # every other view in the app.
+    consolidated = rebuild_consolidated(consolidated, plant)
 
     return {
         "plant": plant,
@@ -107,7 +116,38 @@ def load_workbook_tables(path: Path = DATA_PATH) -> Dict[str, pd.DataFrame]:
         "states_raw": states,
         "raw_sheets": raw_sheets,
         "detail_p50": get_detail_p50(raw_sheets["DetailOfP50"]),
+        "pr_analysis": get_pr_analysis(raw_sheets["PRanalysis"]),
+        "age_table": get_age_table(raw_sheets["PlantData"]),
+        "tmy_locations": get_tmy_locations(raw_sheets["States25"]),
+        "pi_cdf": build_pi_cdf(plant),
+        "overlap_stats": get_overlap_stats(raw_sheets["NullOverlap"]),
     }
+
+
+def rebuild_consolidated(consolidated: pd.DataFrame, plant: pd.DataFrame) -> pd.DataFrame:
+    """Refresh the ranked results table with temperature-adjusted PI values.
+
+    The workbook's ConsolidatedResults sheet still holds the pre-adjustment PI, which
+    would put the ranking chart and the ranked table out of step with the rest of the
+    app. This joins the adjusted 'Lifetime PI' from PlantData by system name and
+    re-sorts, leaving all other columns untouched.
+    """
+    out = consolidated.copy()
+    if "Name" not in out.columns or "PI (@0.5% degr)" not in out.columns:
+        return out
+    if "Name" not in plant.columns or "Lifetime PI" not in plant.columns:
+        return out
+
+    adjusted = plant[["Name", "Lifetime PI"]].dropna(subset=["Name"]).drop_duplicates("Name")
+    lookup = dict(zip(adjusted["Name"], pd.to_numeric(adjusted["Lifetime PI"], errors="coerce")))
+
+    mapped = out["Name"].map(lookup)
+    # Fall back to the stored value for any system that cannot be matched by name.
+    out["PI (@0.5% degr)"] = mapped.fillna(pd.to_numeric(out["PI (@0.5% degr)"], errors="coerce"))
+
+    out = out.sort_values("PI (@0.5% degr)", ascending=False, kind="mergesort").reset_index(drop=True)
+    out["PI rank #"] = np.arange(1, len(out) + 1)
+    return out
 
 
 def build_annual_long(plant: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -233,7 +273,7 @@ def get_state_counts(states_raw: pd.DataFrame) -> pd.DataFrame:
 
 def get_detail_p50(detail_raw: pd.DataFrame) -> pd.DataFrame:
     """Parse the representative median-system variability table from DetailOfP50."""
-    rows = detail_raw.iloc[5:10, :57].copy()
+    rows = detail_raw.iloc[5:10, :93].copy()
     records = []
     for _, r in rows.iterrows():
         if pd.isna(r.iloc[1]):
@@ -268,15 +308,184 @@ def get_detail_p50(detail_raw: pd.DataFrame) -> pd.DataFrame:
         # so the app follows the spreadsheet chart ranges instead of recomputing visually similar lines.
         for year in range(1, 18):
             rec[f"fit_year_{year}"] = pd.to_numeric(r.iloc[40 + year - 1], errors="coerce") if 40 + year - 1 < len(r) else np.nan
+        # Explicit high/low weather-variability bands added to the revised workbook at
+        # BG:BW and BY:CO. The workbook only populates these for the system used in its
+        # own chart, so the app falls back to computing the band where they are blank.
+        for year in range(1, 18):
+            rec[f"high_year_{year}"] = pd.to_numeric(r.iloc[58 + year - 1], errors="coerce") if 58 + year - 1 < len(r) else np.nan
+            rec[f"low_year_{year}"] = pd.to_numeric(r.iloc[76 + year - 1], errors="coerce") if 76 + year - 1 < len(r) else np.nan
         records.append(rec)
     df = pd.DataFrame(records)
     return df
 
 
+def get_pr_analysis(pr_raw: pd.DataFrame) -> pd.DataFrame:
+    """Parse the PRanalysis sheet added in the revised workbook.
+
+    The sheet relates each system's demonstrated performance ratio to its estimated
+    module temperature, and records the temperature correction factor alongside the
+    original and corrected performance index.
+    """
+    if pr_raw is None or pr_raw.empty:
+        return pd.DataFrame()
+    rows = pr_raw.iloc[6:106, :18].copy()
+    records = []
+    for _, r in rows.iterrows():
+        if pd.isna(r.iloc[0]) or pd.isna(r.iloc[2]):
+            continue
+        records.append({
+            "Line#": pd.to_numeric(r.iloc[0], errors="coerce"),
+            "EIA#": pd.to_numeric(r.iloc[1], errors="coerce"),
+            "Name": r.iloc[2],
+            "Module type": r.iloc[3],
+            "Type": r.iloc[4],
+            "Slope/Tilt": pd.to_numeric(r.iloc[5], errors="coerce"),
+            "State": r.iloc[6],
+            "Lat": pd.to_numeric(r.iloc[7], errors="coerce"),
+            "Long": pd.to_numeric(r.iloc[8], errors="coerce"),
+            "Estim. Tmod": pd.to_numeric(r.iloc[9], errors="coerce"),
+            "PR": pd.to_numeric(r.iloc[10], errors="coerce"),
+            "PI with Tmod correction": pd.to_numeric(r.iloc[11], errors="coerce"),
+            "Tmod correction": pd.to_numeric(r.iloc[12], errors="coerce"),
+            "PI original": pd.to_numeric(r.iloc[13], errors="coerce"),
+        })
+    df = pd.DataFrame(records)
+    if not df.empty:
+        df["PI change"] = df["PI with Tmod correction"] - df["PI original"]
+    return df
+
+
+def get_pr_analysis_summary(pr_raw: pd.DataFrame) -> Dict[str, float]:
+    """Set-level average module temperatures and median PI before/after correction."""
+    out: Dict[str, float] = {}
+    if pr_raw is None or pr_raw.empty:
+        return out
+    try:
+        out["set_a_tmod"] = float(pd.to_numeric(pr_raw.iat[2, 1], errors="coerce"))
+        out["set_b_tmod"] = float(pd.to_numeric(pr_raw.iat[3, 1], errors="coerce"))
+        out["median_pi_corrected"] = float(pd.to_numeric(pr_raw.iat[3, 11], errors="coerce"))
+        out["median_pi_original"] = float(pd.to_numeric(pr_raw.iat[3, 13], errors="coerce"))
+    except Exception:
+        pass
+    return out
+
+
+def get_age_table(plant_raw: pd.DataFrame) -> pd.DataFrame:
+    """Operating-age counts split by structure, from PlantData FY6:GB18.
+
+    The revised workbook states these counts directly, so the app reads them instead of
+    recomputing ages from the first full year of operation.
+    """
+    if plant_raw is None or plant_raw.shape[1] <= 183:
+        return pd.DataFrame()
+    block = plant_raw.iloc[6:18, 180:184].copy()
+    block.columns = ["Age", "Number", "Fixed-tilt", "Tracking"]
+    for col in block.columns:
+        block[col] = pd.to_numeric(block[col], errors="coerce")
+    block = block.dropna(subset=["Age"])
+    block = block[block["Number"].fillna(0) > 0].reset_index(drop=True)
+    return block
+
+
+def get_tmy_locations(states25_raw: pd.DataFrame) -> pd.DataFrame:
+    """Unique TMY locations used across both data sets, from States25 J31:J85."""
+    if states25_raw is None or states25_raw.shape[1] <= 9:
+        return pd.DataFrame()
+    block = states25_raw.iloc[31:, [8, 9]].copy()
+    block.columns = ["#", "TMY location"]
+    block["#"] = pd.to_numeric(block["#"], errors="coerce")
+    block = block.dropna(subset=["TMY location"])
+    block = block[block["#"].notna()].reset_index(drop=True)
+    block["#"] = block["#"].astype(int)
+    return block
+
+
+def build_pi_cdf(plant: pd.DataFrame, max_year: int = 16) -> pd.DataFrame:
+    """Cumulative distribution of annual PI for each operating year.
+
+    For each operating year the systems are sorted from worst to best PI and plotted
+    against the increasing percentage of the fleet. Because this is rebuilt from the
+    master plant table rather than from an anonymized export, every point keeps its
+    system name, state, size, and structure for hover identification.
+    """
+    id_cols = [c for c in ["Name", "State", "Type", "MWp", "1st full yr"] if c in plant.columns]
+    frames = []
+    for year in range(1, max_year + 1):
+        col = PI_COLS[year - 1]
+        if col not in plant.columns:
+            continue
+        part = plant[id_cols + [col]].copy()
+        part = part.rename(columns={col: "pi"})
+        part["pi"] = pd.to_numeric(part["pi"], errors="coerce")
+        part = part.dropna(subset=["pi"]).sort_values("pi", kind="mergesort").reset_index(drop=True)
+        count = len(part)
+        if count == 0:
+            continue
+        part["Operating year"] = year
+        part["rank"] = np.arange(1, count + 1)
+        # Match the workbook's plotting positions: (rank - 0.5) / n.
+        part["Cumulative fraction"] = (part["rank"] - 0.5) / count
+        part["Systems in year"] = count
+        frames.append(part)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
+def pi_cdf_median_trend(cdf: pd.DataFrame) -> Dict[str, float]:
+    """Median PI by operating year and the fitted decline across the CDF family."""
+    if cdf is None or cdf.empty:
+        return {}
+    medians = cdf.groupby("Operating year")["pi"].median()
+    if len(medians) < 2:
+        return {}
+    slope, intercept = np.polyfit(medians.index.to_numpy(float), medians.to_numpy(float), 1)
+    return {
+        "slope": float(slope),
+        "intercept": float(intercept),
+        "first_year_median": float(medians.iloc[0]),
+        "last_year_median": float(medians.iloc[-1]),
+        "first_year": int(medians.index[0]),
+        "last_year": int(medians.index[-1]),
+    }
+
+
+def get_overlap_stats(null_raw: pd.DataFrame) -> Dict[str, float]:
+    """Overlap area, crossover PI, and the two set statistics from NullOverlap.
+
+    The revised workbook shifted this block three columns to the left and lengthened the
+    PI grid, so the values are located by scanning rather than by fixed cell reference.
+    """
+    out: Dict[str, float] = {}
+    if null_raw is None or null_raw.empty:
+        return out
+    try:
+        out["set_a_pi7"] = float(pd.to_numeric(null_raw.iat[3, 1], errors="coerce"))
+        out["set_a_stdev"] = float(pd.to_numeric(null_raw.iat[3, 2], errors="coerce"))
+        out["set_b_pi7"] = float(pd.to_numeric(null_raw.iat[4, 1], errors="coerce"))
+        out["set_b_stdev"] = float(pd.to_numeric(null_raw.iat[4, 2], errors="coerce"))
+    except Exception:
+        pass
+
+    # Locate the labelled summary lines in the explanatory column and read the value
+    # recorded a few rows below each label.
+    labels = null_raw.iloc[:, 5]
+    for row_idx, raw_text in labels.items():
+        if not isinstance(raw_text, str):
+            continue
+        lowered = raw_text.lower()
+        if "equal probability" in lowered:
+            out["crossover_pi"] = float(pd.to_numeric(null_raw.iat[row_idx + 1, 5], errors="coerce"))
+        elif lowered.startswith("the total area common"):
+            out["overlap_area"] = float(pd.to_numeric(null_raw.iat[row_idx + 1, 8], errors="coerce"))
+        elif lowered.startswith("so the chance that these are different"):
+            out["non_overlap_area"] = float(pd.to_numeric(null_raw.iat[row_idx + 1, 8], errors="coerce"))
+    return {k: v for k, v in out.items() if v == v}
+
+
 def build_workbook_plot_tables(raw_sheets: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     plant_raw = raw_sheets["PlantData"]
     states25 = raw_sheets["States25"]
-    exclusions = raw_sheets["Exclusions"]
     null_overlap = raw_sheets["NullOverlap"]
 
     percentile_parts: List[pd.DataFrame] = [
@@ -284,6 +493,15 @@ def build_workbook_plot_tables(raw_sheets: Dict[str, pd.DataFrame]) -> Dict[str,
         _series_from_cells(plant_raw, "BA109", "BB215:BQ215", "BB109:BQ109"),
         _series_from_cells(plant_raw, "BA113", "BB215:BQ215", "BB113:BQ113"),
     ]
+    # The revised workbook adds a statistical p10 row to sit alongside the existing
+    # statistical p90, so the high case now has both an observed and a fitted version.
+    if plant_raw.shape[0] > 218:
+        try:
+            percentile_parts.append(
+                _series_from_cells(plant_raw, "BA219", "BB215:BQ215", "BB219:BQ219")
+            )
+        except Exception:
+            pass
     percentile = pd.concat(percentile_parts, ignore_index=True)
 
     p90_p50_split = pd.concat([
@@ -305,12 +523,18 @@ def build_workbook_plot_tables(raw_sheets: Dict[str, pd.DataFrame]) -> Dict[str,
         _series_from_cells(plant_raw, None, "BH6:BQ6", "BH2:BQ2").assign(series="P90 trend, years 7 to 16"),
     ], ignore_index=True)
 
-    agua_fria = _series_from_cells(exclusions, None, "I2:AE2", "I5:AE5").assign(series="Agua Fria PI")
-
+    # The revised NullOverlap sheet moved this block three columns to the left and
+    # extended the PI grid from 14 to 20 points. Column K is a new 'Min density'
+    # envelope, which is the smaller of the two density curves at each PI value and
+    # therefore traces the area the two distributions have in common.
     null_df = pd.concat([
-        _series_from_cells(null_overlap, "L1", "I4:I17", "L4:L17"),
-        _series_from_cells(null_overlap, "M1", "I4:I17", "M4:M17"),
+        _series_from_cells(null_overlap, "I1", "F4:F23", "I4:I23"),
+        _series_from_cells(null_overlap, "J1", "F4:F23", "J4:J23"),
     ], ignore_index=True)
+
+    null_overlap_band = _series_from_cells(null_overlap, None, "F4:F23", "K4:K23").assign(
+        series="Overlapping area"
+    )
 
     return {
         "fleet_percentiles": percentile,
@@ -318,6 +542,6 @@ def build_workbook_plot_tables(raw_sheets: Dict[str, pd.DataFrame]) -> Dict[str,
         "p90_p50_full": p90_p50_full,
         "piecewise_trends": piecewise,
         "temperature_hist": pd.DataFrame(),
-        "agua_fria": agua_fria,
         "null_overlap": null_df,
+        "null_overlap_band": null_overlap_band,
     }

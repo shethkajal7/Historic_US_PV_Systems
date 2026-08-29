@@ -1,19 +1,21 @@
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 from streamlit_folium import st_folium
 
 from data_loader import (
     load_workbook_tables, build_annual_long, summary_metrics, top_stats_table,
     temperature_histogram_table, get_comparison_table, get_state_counts,
-    build_workbook_plot_tables
+    build_workbook_plot_tables, get_pr_analysis_summary, pi_cdf_median_trend
 )
 from charts import (
     pi_rank_chart, pi_distribution_by_type, degradation_scatter, annual_pi_cone,
-    age_distribution_chart, state_count_chart, site_actual_chart, site_pi_chart,
-    workbook_line_chart, workbook_ratio_chart, workbook_bar_chart,
+    age_distribution_chart, age_table_chart, state_count_chart, site_actual_chart,
+    site_pi_chart, workbook_line_chart, workbook_ratio_chart,
     temperature_comparison_chart, null_overlap_chart, variability_middle_systems_chart,
-    variability_single_system_chart, piecewise_pi_trend_chart
+    variability_single_system_chart, piecewise_pi_trend_chart, pi_cdf_chart,
+    pr_vs_temperature_chart, pi_temperature_adjustment_chart
 )
 from map_view import make_cluster_map
 
@@ -33,6 +35,8 @@ def get_data():
     tables["workbook_plots"]["temperature_hist"] = temperature_histogram_table(
         tables["plant"], tables["newer25"]
     )
+    tables["pr_summary"] = get_pr_analysis_summary(tables["raw_sheets"]["PRanalysis"])
+    tables["cdf_trend"] = pi_cdf_median_trend(tables["pi_cdf"])
     return tables
 
 
@@ -158,8 +162,6 @@ def main():
     )
 
     tables = get_data()
-
-    tables = get_data()
     plant = tables["plant"]
     consolidated = tables["consolidated"]
     actual_long = tables["actual_long"]
@@ -167,6 +169,13 @@ def main():
     summary = tables["summary"]
     workbook_plots = tables["workbook_plots"]
     detail_p50 = tables.get("detail_p50")
+    pr_analysis = tables.get("pr_analysis")
+    age_table = tables.get("age_table")
+    tmy_locations = tables.get("tmy_locations")
+    pi_cdf = tables.get("pi_cdf")
+    cdf_trend = tables.get("cdf_trend", {})
+    overlap_stats = tables.get("overlap_stats", {})
+    pr_summary = tables.get("pr_summary", {})
 
     tabs = st.tabs(["Summary", "Map", "Performance", "Site Drilldown", "Data Tables"])
 
@@ -191,6 +200,24 @@ def main():
 
         st.subheader("Fleet Summary Comparison")
         display_comparison_table(tables["comparison"])
+        if pr_summary.get("median_pi_original") and pr_summary.get("median_pi_corrected"):
+            chart_note(
+                "This version of the workbook adjusts each system's expected energy for the "
+                "module temperature it actually operates at, so that systems in hot and cold "
+                "climates are compared on a more even footing. Actual generation and the "
+                f"degradation slopes are unchanged. The median lifetime PI moves from "
+                f"{pr_summary['median_pi_original']:.3f} before the adjustment to "
+                f"{pr_summary['median_pi_corrected']:.3f} after it. The adjustment is close to "
+                "neutral across the fleet as a whole, raising the PI for about half the systems "
+                "and lowering it for the other half, but it changes individual rankings "
+                "noticeably. The 'Finding' column above is carried over from the workbook and "
+                "was written against the earlier, unadjusted numbers. In particular, the "
+                "difference in seven-year PI between hot and cold locations narrows to about "
+                "2.5 percentage points once expected energy is temperature-adjusted, so most of "
+                "the apparent hot-climate penalty in the earlier version was an artifact of not "
+                "making that adjustment. A real gap does remain over full lifetimes, where the "
+                "average PI is 0.75 in hot locations against 0.86 in cold ones."
+            )
         st.info("Set A is the 100 longest-running PV systems in the EIA database. Set B is a random set of 25 PV systems that began operating in 2018. This comparison is offered to show how the performance over the first seven years of the older set compares to the initial seven years, approximately, of the newer sample. Since most of the older set began in about 2010, there is an eight-year industry evolution that takes place in terms of equipment, design practice, developers, and locale. The most notable shift over the eight years between these samples is the inverter loading ratio, or ILR, often equivalently called the dc:ac ratio. In the older set, the median and average ILRs were 1.12 and 1.18, respectively. With ILRs this low, there is very little energy sacrificed due to clipping in this older set of 100. It is nearly negligible. However, in the newer set, the median ILR of 1.33 and the average ILR of 1.25 suggest the typical clipping loss for the newer systems has been in excess of 2% per year. Clipping hides part of the otherwise noticeable degradation, making high-ILR systems appear to be more stable than an otherwise identical system with a lower ILR and no clipping.")
         st.plotly_chart(state_count_chart(tables["state_counts"]), use_container_width=True)
         st.info("The taller layout keeps every state label readable in print or exported screenshots.")
@@ -222,9 +249,19 @@ def main():
         st.plotly_chart(pi_rank_chart(rank_table.head(show_rows), rows=show_rows), use_container_width=True)
         chart_note("This ranking highlights the strongest lifetime performers. Sites at the top are good models for investigating what design choices and O&M practices have been used and are worth replicating, especially if the poorer-performing systems are marked by readily identifiable differences in equipment and O&M. The rankings here assume an allowed 0.5%/year degradation for all systems.")
 
-        age_filtered = chart_filter_panel(plant, "age", "Age distribution filters")
-        st.plotly_chart(age_distribution_chart(age_filtered, actual_long), use_container_width=True)
-        chart_note("The age distribution shows how many systems fall into each operating-age range based on the EIA's latest available production year, typically through 2024 as of the time of this analysis. Only four of the 100 systems have logged at least 17 years, and only one has been operating longer than 17 years, though all 100 have logged at least 12 years. Over half of the sample has amassed an operating history of 14 to 15 years.")
+        if age_table is not None and not age_table.empty:
+            # The revised workbook states the operating-age counts directly, split by
+            # structure, so this chart reads them instead of recomputing ages. Because
+            # the counts are fleet-wide totals, the chart-level filters do not apply.
+            latest_year = None
+            if not actual_long.empty and "calendar_year" in actual_long.columns:
+                latest_year = int(pd.to_numeric(actual_long["calendar_year"], errors="coerce").max())
+            st.plotly_chart(age_table_chart(age_table, latest_year), use_container_width=True)
+            chart_note("The age distribution shows how many systems fall into each operating-age range based on the EIA's latest available production year, typically through 2024 as of the time of this analysis. Only four of the 100 systems have logged at least 17 years, and only one has been operating longer than 17 years, though all 100 have logged at least 12 years. Just under half of the sample has amassed an operating history of 14 to 15 years. The bars are split into fixed-tilt and tracking systems using the counts stated in the workbook, so this chart always shows the full fleet and is not affected by the chart-level filters.")
+        else:
+            age_filtered = chart_filter_panel(plant, "age", "Age distribution filters")
+            st.plotly_chart(age_distribution_chart(age_filtered, actual_long), use_container_width=True)
+            chart_note("The age distribution shows how many systems fall into each operating-age range based on the EIA's latest available production year, typically through 2024 as of the time of this analysis. Only four of the 100 systems have logged at least 17 years, and only one has been operating longer than 17 years, though all 100 have logged at least 12 years. Just under half of the sample has amassed an operating history of 14 to 15 years.")
 
         dist_filtered = chart_filter_panel(plant, "dist", "PI and degradation chart filters")
         st.plotly_chart(pi_distribution_by_type(dist_filtered), use_container_width=True)
@@ -237,6 +274,52 @@ def main():
         st.plotly_chart(annual_pi_cone(filtered_pi_long), use_container_width=True)
         chart_note("This annual PI chart recalculates the P10, P50, P90, and average curves from the selected sites. The straight-line fits are limited to operating years 1 through 16 because only four systems have data beyond year 16, making later-year fitted slopes unreliable.")
 
+        if pi_cdf is not None and not pi_cdf.empty:
+            st.divider()
+            st.subheader("PI Probability Distribution by Operating Year")
+            cdf_filtered = chart_filter_panel(plant, "cdf", "PI distribution chart filters")
+            cdf_names = set(cdf_filtered["Name"].dropna())
+            cdf_subset = pi_cdf[pi_cdf["Name"].isin(cdf_names)]
+            st.plotly_chart(pi_cdf_chart(cdf_subset), use_container_width=True)
+            trend_text = ""
+            if cdf_trend:
+                trend_text = (
+                    " At the key p50 y-axis point, the fleet's median PI decreases from about "
+                    f"{cdf_trend['first_year_median']:.2f} in the first year or two down to "
+                    f"{cdf_trend['last_year_median']:.2f} by the "
+                    f"{cdf_trend['last_year'] - 1}th to {cdf_trend['last_year']}th years. That "
+                    "illustrates, at least indirectly, an average decline of "
+                    f"{abs(cdf_trend['slope']) * 100:.1f}% PI percentage points per year. Again, "
+                    "that is in excess of the 0.5% degradation already allowed for."
+                )
+            chart_note(
+                "For year 1, the 100 systems are sorted from worst to best PI, and the chart "
+                "plots the increasing percentage of the fleet as the PI increases from worst to "
+                "best. That gives a classic cumulative distribution shape. The same is done for "
+                "year 2 and so on through year 16. The gradual right-to-left shift of the "
+                "resulting family of curves illustrates the fleet's overall degradation, or at "
+                "least the amount in excess of the baked-in 0.5%/yr that is considered "
+                "acceptable and normal." + trend_text + " Another thing to see here is how the "
+                "shape of the distribution curves softens and widens with time. Ideally the plot "
+                "would be a sharp and perfect zig-zag, with y=0 until PI=1.0, then a sudden jump "
+                "to y=1, then y staying at a constant 1.0 at any higher value of PI. In reality "
+                "the S-shaped curve starts to flatten out. This is a variation on the same "
+                "material portrayed elsewhere on this page, just a different visualization. "
+                "There is nothing special about the thicker lines on years 1, 4, 7, 10, 13, and "
+                "16, but drawing them that way makes it easier to see the decay and separation "
+                "of the curves every few years."
+            )
+            st.info(
+                "The curves are built from the master plant table rather than from an anonymized "
+                "export, so hovering any point identifies the system it represents, along with "
+                "its state, structure, and size. The chart-level filters above apply to these "
+                "curves as well. One caution on reading the later years: all 100 systems "
+                "contribute to years 1 through 12, but only 97, 73, 41, and 24 systems reach "
+                "years 13, 14, 15, and 16 respectively. The hover text reports the system count "
+                "for each year, and the later curves rest on a much thinner sample than the "
+                "early ones."
+            )
+
         st.divider()
         st.subheader("Additional Performance Diagnostics")
 
@@ -248,7 +331,7 @@ def main():
             ),
             use_container_width=True,
         )
-        chart_note("This percentile chart summarizes annual normalized performance by operating year. P50 represents the central system in the fleet, P10 represents the high-performance case, and P90 represents the downside or weaker-performance case. The trend equations make the direction and rate of change transparent instead of relying only on visual slope.")
+        chart_note("This percentile chart summarizes annual normalized performance by operating year. P50 represents the central system in the fleet, P10 represents the high-performance case, and P90 represents the downside or weaker-performance case. The trend equations make the direction and rate of change transparent instead of relying only on visual slope. The revised workbook adds a Gaussian p10 series, which estimates the high case from the median and the annual fleet standard deviation, so the upside now has both an observed and a fitted version in the same way the downside already did.")
 
         st.plotly_chart(
             workbook_ratio_chart(
@@ -284,11 +367,33 @@ def main():
         chart_note("This temperature distribution compares the older and newer samples as a percentage of each sample. Set A contains 47 cold, 41 medium, and 12 hot sites; Set B contains 18 cold, 6 medium, and 1 hot site.")
 
         st.plotly_chart(
-            null_overlap_chart(workbook_plots["null_overlap"]),
+            null_overlap_chart(
+                workbook_plots["null_overlap"],
+                overlap_band=workbook_plots.get("null_overlap_band"),
+            ),
             use_container_width=True,
         )
-        st.info("The estimated overlap between the older-fleet and newer-fleet distributions is about 88%. Interpreted simply, only about 12% of the distribution area does not overlap, so the evidence that the two samples are statistically different is weak. The newer fleet median PI is slightly lower, but not with a high degree of confidence.")
-        chart_note("This null-overlap chart compares the early-year PI distribution of the 100 older systems against the 25 newer systems. The large overlap suggests that the newer sample should be treated as broadly comparable in early-life performance, while still recognizing that its median is modestly lower.")
+        overlap_pct = overlap_stats.get("overlap_area")
+        non_overlap_pct = overlap_stats.get("non_overlap_area")
+        if overlap_pct is not None and non_overlap_pct is not None:
+            st.info(
+                f"The estimated overlap between the older-fleet and newer-fleet distributions is "
+                f"about {overlap_pct:.0%}. Interpreted simply, only about {non_overlap_pct:.0%} of "
+                "the distribution area does not overlap, so the evidence that the two samples are "
+                "statistically different is weak. The newer fleet median PI is slightly lower, but "
+                "not with a high degree of confidence."
+            )
+        else:
+            st.info("The estimated overlap between the older-fleet and newer-fleet distributions is about 84%. Interpreted simply, only about 16% of the distribution area does not overlap, so the evidence that the two samples are statistically different is weak. The newer fleet median PI is slightly lower, but not with a high degree of confidence.")
+        chart_note("This null-overlap chart compares the early-year PI distribution of the 100 older systems against the 25 newer systems. The large overlap suggests that the newer sample should be treated as broadly comparable in early-life performance, while still recognizing that its median is modestly lower. The shaded region traces the lower of the two density curves at each PI value, so it shows the area the two distributions actually have in common, which is the quantity the overlap percentage measures.")
+
+        if pr_analysis is not None and not pr_analysis.empty:
+            st.divider()
+            st.subheader("Performance Ratio and Module Temperature")
+            st.plotly_chart(pr_vs_temperature_chart(pr_analysis), use_container_width=True)
+            chart_note("This chart investigates the relationship between demonstrated lifetime performance ratio and module temperature, separately for fixed-tilt and tracking structures. The demonstrated PR is just the demonstrated PR and has no need to be adjusted for whatever temperature the system happened to operate at, but relating the two is what motivates the temperature adjustment applied to the PI. For fixed-tilt systems the fitted line is nearly flat, so there is little relationship. For trackers the fitted line does decline with temperature, but the scatter around it is wide enough that the relationship is erratic rather than dependable.")
+            st.plotly_chart(pi_temperature_adjustment_chart(pr_analysis), use_container_width=True)
+            chart_note("This chart shows the effect of the temperature adjustment on each system's lifetime PI, plotted against the module temperature that drives it. The PI can be adjusted for temperature deviation from the group average, which reduces the scatter somewhat and balances the calculated PIs across varying climates. Each vertical line connects one system's PI before and after the adjustment. Systems running hotter than the fleet average are credited upward and cooler systems are pulled down, so the correction is close to neutral in aggregate while still moving individual systems by up to about five percentage points.")
 
         if detail_p50 is not None and not detail_p50.empty:
             st.divider()
@@ -306,7 +411,12 @@ def main():
         row = plant[plant["Name"] == site].iloc[0]
         meta_cols = ["Name", "EIA#", "State", "Sector", "Module type", "Developer", "Type", "Slope/Tilt", "MWp", "MWac", "POA (by eqn.)", "TMY2 Source", "Annual T,air", "Estim. Tmod", "DF", "Est.Clip", "Clip Frac.", "Expected", "Actual", "Lifetime PI", "Percentile Rank", "Lifetime Degr"]
         meta = row[[c for c in meta_cols if c in row.index]].to_frame("Value")
-        st.dataframe(rounded_for_display(meta), use_container_width=True)
+        # This column mixes text fields with numeric ones, which Arrow cannot serialize as
+        # a single typed column. Rounding first, then rendering as text, keeps the table
+        # readable and avoids the fallback conversion warning.
+        meta = rounded_for_display(meta)
+        meta["Value"] = meta["Value"].apply(lambda v: "" if pd.isna(v) else str(v))
+        st.dataframe(meta, use_container_width=True)
         st.plotly_chart(site_actual_chart(actual_long, site), use_container_width=True)
         chart_note("This chart shows the selected site’s annual generation over calendar time. The dashed trendline and equation summarize the direction of production change, while individual points reveal year-specific dips that may come from downtime, curtailment, weather, or equipment performance.")
         st.plotly_chart(site_pi_chart(pi_long, site), use_container_width=True)
@@ -332,15 +442,26 @@ def main():
             use_container_width=True,
             hide_index=True,
         )
+        chart_note("The PI column and the rank order in this table are rebuilt from the plant-level data so that they reflect the module-temperature adjustment, since the workbook's own consolidated sheet was not refreshed when that adjustment was applied. Every other column is carried over from the workbook unchanged, including the degradation slopes, which the adjustment does not affect.")
+
         st.subheader("Plant-Level Data Extract Used by the App")
         display_cols = [c for c in ["Line#", "EIA#", "Name", "1st full yr", "Sector", "Module type", "Developer", "Type", "State", "Lat", "Long", "MWp", "MWac", "TMY2 Source", "Lifetime PI", "Percentile Rank", "Lifetime Degr"] if c in plant.columns]
         st.dataframe(
             rounded_for_display(plant[display_cols].head(table_rows)),
             use_container_width=True,
             hide_index=True,
-     
- )
+        )
+
+        if tmy_locations is not None and not tmy_locations.empty:
+            st.subheader("TMY Locations Used Across Both Data Sets")
+            st.dataframe(
+                tmy_locations,
+                use_container_width=True,
+                hide_index=True,
+                column_config={"#": st.column_config.NumberColumn(format="%d")},
+            )
+            chart_note(f"These are the {len(tmy_locations)} unique typical-meteorological-year locations used to build the expected-energy basis for Set A and Set B combined. Several systems share a location, so the count is smaller than the number of systems.")
+
+
 if __name__ == "__main__":
     main()
-st.markdown('<p class="attrib">This webpage was created and co-authored by <b>Tim Townsend</b>, <b>Kajal Sheth</b>, <b>Kenneth Sauer</b> 😊</p>',
-            unsafe_allow_html=True)
