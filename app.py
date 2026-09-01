@@ -153,23 +153,22 @@ def chart_filter_panel(
 def main():
     st.title("America’s 100 Oldest Utility-Scale and Distributed PV Systems")
 
-    # Introductory copy can be replaced with the reviewer-supplied warmup text when available.
-    st.markdown(
-        "These systems provide a rare long-term record of how U.S. photovoltaic assets "
-        "have performed over many years of real-world operation. The Agua Fria array "
-        "shown below is the oldest operating system identified in this study."
-    )
-    st.image(
-        str(AGUA_FRIA_IMAGE),
-        caption="The 258 kWp Agua Fria tracking system in Glendale, AZ was installed in 2003.",
-        use_container_width=True,
-    )
-
     st.caption(
         "Interactive analysis of the oldest 100 U.S. PV systems, as drawn primarily "
         "from the Energy Information Administration (EIA) "
         "https://www.eia.gov/beta/electricity/data/browser/. Use the chart-level "
         "filters to explore performance by geography and system structure."
+    )
+    st.markdown(
+        "These systems provide a rare long-term record of how U.S. photovoltaic assets "
+        "have performed over many years of real-world operation. The Agua Fria array "
+        "shown below is the oldest operating system identified in this study."
+    )
+    
+    st.image(
+        str(AGUA_FRIA_IMAGE),
+        caption="The 258 kWp Agua Fria tracking system in Glendale, AZ was installed in 2003.",
+        use_container_width=True,
     )
 
     st.markdown(
