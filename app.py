@@ -200,16 +200,7 @@ def main():
 
         st.subheader("Fleet Summary Comparison")
         display_comparison_table(tables["comparison"])
-        if pr_summary.get("median_pi_original") and pr_summary.get("median_pi_corrected"):
-            chart_note(
-                "Expected energy is adjusted for the module temperature each system actually "
-                "operates at, so that hot and cold climates are compared on a more even footing. "
-                f"This moves the median lifetime PI from {pr_summary['median_pi_original']:.3f} "
-                f"to {pr_summary['median_pi_corrected']:.3f} and shifts individual rankings. The "
-                "Finding column above predates this adjustment: the hot-versus-cold difference in "
-                "seven-year PI is now about 2.5 percentage points, though a wider gap remains "
-                "over full lifetimes."
-            )
+       
         st.info("Set A is the 100 longest-running PV systems in the EIA database. Set B is a random set of 25 PV systems that began operating in 2018. This comparison is offered to show how the performance over the first seven years of the older set compares to the initial seven years, approximately, of the newer sample. Since most of the older set began in about 2010, there is an eight-year industry evolution that takes place in terms of equipment, design practice, developers, and locale. The most notable shift over the eight years between these samples is the inverter loading ratio, or ILR, often equivalently called the dc:ac ratio. In the older set, the median and average ILRs were 1.12 and 1.18, respectively. With ILRs this low, there is very little energy sacrificed due to clipping in this older set of 100. It is nearly negligible. However, in the newer set, the median ILR of 1.33 and the average ILR of 1.25 suggest the typical clipping loss for the newer systems has been in excess of 2% per year. Clipping hides part of the otherwise noticeable degradation, making high-ILR systems appear to be more stable than an otherwise identical system with a lower ILR and no clipping.")
         st.plotly_chart(state_count_chart(tables["state_counts"]), use_container_width=True)
         st.info("The taller layout keeps every state label readable in print or exported screenshots.")
