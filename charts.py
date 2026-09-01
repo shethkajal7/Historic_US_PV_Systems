@@ -659,7 +659,7 @@ def variability_single_system_chart(detail: pd.DataFrame, site_name: str):
         yaxis_title="Performance Index",
         yaxis=dict(range=[0, 1.2]),
     )
-    return polish(fig, height=760, legend="bottom")
+    return polish(fig, height=760, legend="right")
 
 def pi_cdf_chart(
     cdf: pd.DataFrame,
@@ -727,6 +727,7 @@ def pi_cdf_chart(
         yaxis_title="Cumulative fraction of the fleet",
         legend_title_text="Operating year",
     )
+    fig.update_xaxes(dtick=0.05, tickformat=".2f")
     fig.update_yaxes(tickformat=".0%", range=[0, 1.02])
     return polish(fig, height=780, legend="right")
 

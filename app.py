@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 from streamlit_folium import st_folium
@@ -20,6 +22,8 @@ from charts import (
 from map_view import make_cluster_map
 
 st.set_page_config(page_title="Oldest 100 U.S. PV Systems", page_icon="☀️", layout="wide")
+
+AGUA_FRIA_IMAGE = Path(__file__).resolve().parent / "assets" / "agua_fria_tracking.png"
 
 @st.cache_data(show_spinner=False)
 def get_data():
@@ -148,6 +152,19 @@ def chart_filter_panel(
 
 def main():
     st.title("America’s 100 Oldest Utility-Scale and Distributed PV Systems")
+
+    # Introductory copy can be replaced with the reviewer-supplied warmup text when available.
+    st.markdown(
+        "These systems provide a rare long-term record of how U.S. photovoltaic assets "
+        "have performed over many years of real-world operation. The Agua Fria array "
+        "shown below is the oldest operating system identified in this study."
+    )
+    st.image(
+        str(AGUA_FRIA_IMAGE),
+        caption="The 258 kWp Agua Fria tracking system in Glendale, AZ was installed in 2003.",
+        use_container_width=True,
+    )
+
     st.caption(
         "Interactive analysis of the oldest 100 U.S. PV systems, as drawn primarily "
         "from the Energy Information Administration (EIA) "
@@ -203,7 +220,6 @@ def main():
        
         st.info("Set A is the 100 longest-running PV systems in the EIA database. Set B is a random set of 25 PV systems that began operating in 2018. This comparison is offered to show how the performance over the first seven years of the older set compares to the initial seven years, approximately, of the newer sample. Since most of the older set began in about 2010, there is an eight-year industry evolution that takes place in terms of equipment, design practice, developers, and locale. The most notable shift over the eight years between these samples is the inverter loading ratio, or ILR, often equivalently called the dc:ac ratio. In the older set, the median and average ILRs were 1.12 and 1.18, respectively. With ILRs this low, there is very little energy sacrificed due to clipping in this older set of 100. It is nearly negligible. However, in the newer set, the median ILR of 1.33 and the average ILR of 1.25 suggest the typical clipping loss for the newer systems has been in excess of 2% per year. Clipping hides part of the otherwise noticeable degradation, making high-ILR systems appear to be more stable than an otherwise identical system with a lower ILR and no clipping.")
         st.plotly_chart(state_count_chart(tables["state_counts"]), use_container_width=True)
-        st.info("The taller layout keeps every state label readable in print or exported screenshots.")
         
 
     with tabs[1]:

@@ -13,7 +13,7 @@ streamlit run app.py
 
 | File | Description |
 | --- | --- |
-| `data/100oldest.xlsx` | Current source workbook, revised to adjust expected energy for estimated module temperature. |
+| `data/100oldest.xlsx` | Current source workbook, including the module-temperature adjustment and the revised true-degradation analysis for Set A and Set B. |
 | `data/100oldest_pre_tmod_adj.xlsx` | Previous workbook, retained for provenance. Not read by the app. |
 
 ### About the module-temperature adjustment
@@ -62,7 +62,7 @@ The app reads several chart source ranges by cell reference. If the workbook is 
 
 Every value in the Fleet Summary Comparison table is read straight from the workbook's `Comparison` sheet, so the page matches the spreadsheet cell for cell.
 
-An earlier version overrode the three degradation rows with the median of the 100 per-system linest slopes. That override has been removed. The sheet reports the slope of the fleet median PI curve (-0.84%/yr over the first seven years), which is within 0.04 points of the piecewise chart on the same page (-0.80%/yr); the override reported the median of the individual slopes (-1.12%/yr), which is 0.32 points away from that chart. The two are different statistics, and because the distribution of per-system slopes is strongly left-skewed, the median of the slopes sits well below the slope of the median.
+The revised workbook adds `SetA_Degr` and `SetB_Degr` tabs. These preserve the main PI analysis, which retains the standard 0.5%/year degradation allowance, while separately removing that allowance before fitting degradation trends. The `Comparison` sheet now references those true total-degradation results. As a result, the app automatically displays the revised degradation values from the workbook without overriding them in Python.
 
 ## Known deprecation
 
