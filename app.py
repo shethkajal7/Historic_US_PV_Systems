@@ -173,7 +173,7 @@ def main():
 
     st.markdown(
         '<p class="attrib">This webpage was created and co-authored by '
-        '<b>Tim Townsend</b>, <b>Kajal Sheth</b>, <b>Kenneth Sauer</b> 😊</p>',
+        '<b>Tim Townsend</b>, <b>Kajal Sheth</b> 😊</p>',
         unsafe_allow_html=True
     )
 
